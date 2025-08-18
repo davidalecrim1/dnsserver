@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
+	"log/slog"
 	"strings"
 )
 
 type Header struct {
 	ID              uint16
-	Flags           uint16
+	Flags           uint16 // query/response, opcode, authoritative, truncated, recursion desired, recursion available, reserved, response code
 	QuestionsCount  uint16
 	AnswerCount     uint16
 	AuthorityCount  uint16
@@ -27,6 +29,25 @@ func NewHeader(id, flags, questionCount, answerCount, authorityCount, additional
 	}
 }
 
+// SetQueryResponse sets the QR (Query/Response) bit in the DNS header flags.
+// If isQuery = true, the message is a query (QR=0).
+// If isQuery = false, the message is a response (QR=1).
+func (h *Header) SetQueryResponse(isQuery bool) {
+	const qrMask uint16 = 1 << 15 // bit 15 is the QR bit
+
+	if isQuery {
+		// Clear the QR bit to indicate a query
+		// AND with the inverse of the mask (1111_1111_1111_1111 ^ 1000_0000_0000_0000)
+		h.Flags &^= qrMask
+	} else {
+		// Set the QR bit to indicate a response
+		// OR with the mask (sets bit 15 to 1)
+		h.Flags |= qrMask
+	}
+}
+
+// The Header struct has no padding at the moment, so this can parse without relying on that.
+// Future changes need to be aware of that.
 func (h Header) MarshalBinary() ([]byte, error) {
 	buf := bytes.NewBuffer(make([]byte, 0, 12))
 	err := binary.Write(buf, binary.BigEndian, h)
@@ -55,9 +76,13 @@ type Question struct {
 	Class uint16
 }
 
+func nameToLabels(name string) []string {
+	return strings.Split(name, ".")
+}
+
 func (q Question) MarshalBinary() ([]byte, error) {
 	buf := bytes.NewBuffer(make([]byte, 0, 12))
-	for label := range strings.SplitSeq(q.Name, ".") {
+	for _, label := range nameToLabels(q.Name) {
 		buf.WriteByte(byte(len(label)))
 		buf.WriteString(label)
 	}
@@ -99,16 +124,47 @@ func NewQuestionFromBytes(data []byte) (Question, int, error) {
 	return question, offset + 4, nil
 }
 
+type Answer struct {
+	Name   string
+	Type   uint16
+	Class  uint16
+	TTL    uint32
+	Length uint16
+	Data   []byte
+}
+
+func (a Answer) MarshalBinary() ([]byte, error) {
+	buf := bytes.NewBuffer(make([]byte, 0, 10))
+	for _, label := range nameToLabels(a.Name) {
+		buf.WriteByte(byte(len(label)))
+		buf.WriteString(label)
+	}
+	buf.WriteByte(0)
+	binary.Write(buf, binary.BigEndian, a.Type)
+	binary.Write(buf, binary.BigEndian, a.Class)
+	binary.Write(buf, binary.BigEndian, a.TTL)
+	binary.Write(buf, binary.BigEndian, a.Length)
+	buf.Write(a.Data)
+
+	return buf.Bytes(), nil
+}
+
 type Message struct {
 	Header    Header
 	Questions []Question
+	Answers   []Answer
 }
 
 func NewMessageFromBytes(data []byte) (Message, error) {
+	rawFlags := binary.BigEndian.Uint16(data[2:4])
+	slog.Debug("Flags before parsing", "flags", fmt.Sprintf("%016b", rawFlags))
+
 	h, err := NewHeaderFromBytes(data)
 	if err != nil {
 		return Message{}, err
 	}
+
+	slog.Debug("Flags after parsing", "flags", fmt.Sprintf("%016b", h.Flags))
 
 	questions := make([]Question, 0)
 	for i := 0; i < int(h.QuestionsCount); i++ {
@@ -120,10 +176,13 @@ func NewMessageFromBytes(data []byte) (Message, error) {
 		data = data[n:]
 	}
 
-	return Message{
+	m := Message{
 		Header:    h,
 		Questions: questions,
-	}, nil
+	}
+
+	m.Header.QuestionsCount = uint16(len(questions))
+	return m, nil
 }
 
 func (m Message) MarshalBinary() ([]byte, error) {
@@ -131,16 +190,45 @@ func (m Message) MarshalBinary() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	buf := bytes.NewBuffer(make([]byte, 0, 12))
+	buf := bytes.NewBuffer(make([]byte, 0, 100))
 	buf.Write(headerBytes)
 
-	for _, question := range m.Questions {
-		questionBytes, err := question.MarshalBinary()
+	for _, q := range m.Questions {
+		questionBytes, err := q.MarshalBinary()
 		if err != nil {
 			return nil, err
 		}
 		buf.Write(questionBytes)
 	}
 
+	for _, answer := range m.Answers {
+		answerBytes, err := answer.MarshalBinary()
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(answerBytes)
+	}
+
 	return buf.Bytes(), nil
+}
+
+func (m *Message) ProcessQuestions() {
+	for _, question := range m.Questions {
+		// TODO: this is kinda mocked, but later should have real logic
+		a := Answer{
+			Name:  question.Name,
+			Type:  question.Type,
+			Class: question.Class,
+			TTL:   60,                 // default value of TTL in seconds
+			Data:  []byte{8, 8, 8, 8}, // mocked data
+		}
+		a.Length = uint16(len(a.Data))
+		m.Answers = append(m.Answers, a)
+	}
+
+	m.Header.SetQueryResponse(false)
+	m.Header.AnswerCount = uint16(len(m.Answers))
+
+	// clear additional count because we don’t support EDNS; avoids malformed packet warnings in clients like dig
+	m.Header.AdditionalCount = 0
 }

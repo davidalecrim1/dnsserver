@@ -32,7 +32,7 @@ func (s *Server) ListenAndServe(ctx context.Context, conn net.PacketConn) {
 				slog.Error("Error reading from connection", "error", err)
 				return
 			}
-			slog.Debug("Received request", "n", n, "addr", addr)
+			slog.Debug("Received request", "n", n, "addr", addr, "buf", buf[:n])
 
 			msg, err := NewMessageFromBytes(buf[:n])
 			if err != nil {
@@ -40,13 +40,14 @@ func (s *Server) ListenAndServe(ctx context.Context, conn net.PacketConn) {
 				continue
 			}
 
-			slog.Debug("Sending response", "msg", msg)
+			msg.ProcessQuestions()
 			msgBytes, err := msg.MarshalBinary()
 			if err != nil {
 				slog.Error("Error marshalling message", "error", err)
 				continue
 			}
 
+			slog.Debug("Sending response", "msg", msg, "msgBytes", msgBytes)
 			conn.WriteTo(msgBytes, addr)
 		}
 	}
