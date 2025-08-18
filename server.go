@@ -83,6 +83,7 @@ func (s *Server) handleForwardedQuery(conn net.PacketConn, addr net.Addr, queryB
 		s.handleForwardingError(conn, addr, queryBytes)
 		return
 	}
+	slog.Debug("Sending response that was forwarded", "responseBytes", responseBytes)
 	conn.WriteTo(responseBytes, addr)
 }
 
@@ -94,6 +95,7 @@ func (s *Server) handleForwardingError(conn net.PacketConn, addr net.Addr, query
 	}
 
 	msg.Header.SetResponseCode(RCODE_SERVER_FAILURE)
+	msg.Header.SetQuery(false)
 	msg.Header.AdditionalCount = 0
 	raw, err := msg.MarshalBinary()
 	if err != nil {
@@ -101,6 +103,7 @@ func (s *Server) handleForwardingError(conn net.PacketConn, addr net.Addr, query
 		return
 	}
 
+	slog.Debug("Sending response that was forwarded", "responseBytes", raw)
 	conn.WriteTo(raw, addr)
 }
 
