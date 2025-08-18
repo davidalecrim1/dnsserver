@@ -15,7 +15,10 @@ This was implemented from scratch to learn low level details from UDP/DNS protoc
 - **Configurable Resolver**: Easy configuration of upstream DNS resolvers
 - **Comprehensive DNS Protocol Support**: Implements DNS header, questions, and answers according to RFC standards
 
-### Core Components
+> **Warning**: This is not a production-ready DNS server. It is a learning project.
+> Many essential features are not implemented.
+
+## Core Components
 
 - **Header**: DNS message header with proper bit manipulation for flags
 - **Question**: DNS query structure with name parsing
