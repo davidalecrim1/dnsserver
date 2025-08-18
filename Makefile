@@ -6,3 +6,7 @@ simple-test-2:
 
 run:
 	air .
+
+## TODO: See if I can work this with air.
+run-with-forwarding:
+	go run cmd/server/main.go --resolver=1.1.1.1:53

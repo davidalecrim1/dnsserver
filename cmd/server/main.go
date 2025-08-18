@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	dnsserver "dnsserver"
+	"flag"
 	"log"
 	"log/slog"
 	"net"
@@ -22,6 +23,13 @@ func main() {
 		log.Fatal(err)
 	}
 
-	s := dnsserver.NewServer()
+	resolver := flag.String("resolver", "", "The resolver to forward requests to")
+	flag.Parse()
+
+	opts := dnsserver.Options{
+		Resolver: *resolver,
+	}
+
+	s := dnsserver.NewServer(opts)
 	s.ListenAndServe(ctx, conn)
 }

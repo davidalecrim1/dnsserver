@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"
-	"log/slog"
 	"strings"
 )
 
@@ -29,12 +27,11 @@ func NewHeader(id, flags, questionCount, answerCount, authorityCount, additional
 	}
 }
 
-// SetQueryResponse sets the QR (Query/Response) bit in the DNS header flags.
+// SetQuery sets the QR (Query/Response) bit in the DNS header flags.
 // If isQuery = true, the message is a query (QR=0).
 // If isQuery = false, the message is a response (QR=1).
-func (h *Header) SetQueryResponse(isQuery bool) {
+func (h *Header) SetQuery(isQuery bool) {
 	const qrMask uint16 = 1 << 15 // bit 15 is the QR bit
-
 	if isQuery {
 		// Clear the QR bit to indicate a query
 		// AND with the inverse of the mask (1111_1111_1111_1111 ^ 1000_0000_0000_0000)
@@ -44,6 +41,26 @@ func (h *Header) SetQueryResponse(isQuery bool) {
 		// OR with the mask (sets bit 15 to 1)
 		h.Flags |= qrMask
 	}
+}
+
+var (
+	RCODE_NO_ERROR        = uint8(0)
+	RCODE_FORMAT_ERROR    = uint8(1)
+	RCODE_SERVER_FAILURE  = uint8(2)
+	RCODE_NAME_ERROR      = uint8(3)
+	RCODE_NOT_IMPLEMENTED = uint8(4)
+	RCODE_REFUSED         = uint8(5)
+)
+
+// SetResponseCode sets the RCODE (Response Code) in the DNS header.
+// RCODE occupies the lowest 4 bits of the Flags field.
+func (h *Header) SetResponseCode(code uint8) {
+	// Mask to keep only the lowest 4 bits of code
+	code &= 0x0F
+	// Clear the existing RCODE (lowest 4 bits)
+	h.Flags &^= 0x000F
+	// Set the new RCODE
+	h.Flags |= uint16(code)
 }
 
 // The Header struct has no padding at the moment, so this can parse without relying on that.
@@ -156,15 +173,10 @@ type Message struct {
 }
 
 func NewMessageFromBytes(data []byte) (Message, error) {
-	rawFlags := binary.BigEndian.Uint16(data[2:4])
-	slog.Debug("Flags before parsing", "flags", fmt.Sprintf("%016b", rawFlags))
-
 	h, err := NewHeaderFromBytes(data)
 	if err != nil {
 		return Message{}, err
 	}
-
-	slog.Debug("Flags after parsing", "flags", fmt.Sprintf("%016b", h.Flags))
 
 	questions := make([]Question, 0)
 	for i := 0; i < int(h.QuestionsCount); i++ {
@@ -213,6 +225,7 @@ func (m Message) MarshalBinary() ([]byte, error) {
 }
 
 func (m *Message) ProcessQuestions() {
+	answers := make([]Answer, 0)
 	for _, question := range m.Questions {
 		// TODO: this is kinda mocked, but later should have real logic
 		a := Answer{
@@ -223,12 +236,21 @@ func (m *Message) ProcessQuestions() {
 			Data:  []byte{8, 8, 8, 8}, // mocked data
 		}
 		a.Length = uint16(len(a.Data))
-		m.Answers = append(m.Answers, a)
+		answers = append(answers, a)
 	}
 
-	m.Header.SetQueryResponse(false)
-	m.Header.AnswerCount = uint16(len(m.Answers))
+	m.AddAnswers(answers)
+	m.SetResponse(len(answers))
+}
+
+func (m *Message) SetResponse(lenAnswers int) {
+	m.Header.SetQuery(false)
+	m.Header.AnswerCount = uint16(lenAnswers)
 
 	// clear additional count because we don’t support EDNS; avoids malformed packet warnings in clients like dig
 	m.Header.AdditionalCount = 0
+}
+
+func (m *Message) AddAnswers(answers []Answer) {
+	m.Answers = answers
 }
