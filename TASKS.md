@@ -8,7 +8,7 @@
 - [x] Forwarding server. 
 
 ## Bugs
-- [ ] There is an error message when the forwarding is not working.
+- [x] There is an error message when the forwarding is not working.
     - Warning: query response not set
     - Warning: Message parser reports malformed message packet.
 
